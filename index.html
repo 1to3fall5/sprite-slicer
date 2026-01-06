@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>图片切片工具 (实时预览版)</title>
+    <title>Sprite Slicer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
@@ -25,6 +25,35 @@
             display: flex; gap: 20px; align-items: flex-start;
         }
         .bg-controls { flex: 1; }
+        .color-picker-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .color-preview-dot {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            box-shadow: 0 0 3px rgba(0,0,0,0.2);
+            cursor: pointer;
+        }
+        .eyedropper-btn {
+            padding: 5px 10px;
+            font-size: 12px;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: 0.2s;
+            color: #333;
+        }
+        .eyedropper-btn.active {
+            background: #007bff;
+            color: #fff;
+            border-color: #0056b3;
+        }
         .live-preview-box {
             width: 150px;
             text-align: center;
@@ -82,7 +111,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>图片切片工具 (实时预览版)</h1>
+        <h1>Sprite Slicer</h1>
         <p class="info-text">拖动滑块可实时查看去背效果。</p>
 
         <div class="controls-wrapper">
@@ -117,14 +146,22 @@
                 <!-- 4. 去背设置 (带实时预览) -->
                 <div class="bg-remove-section">
                     <div class="bg-controls">
-                        <label style="cursor:pointer; display:flex; align-items:center; gap:5px; margin-bottom: 15px;">
+                        <label style="cursor:pointer; display:flex; align-items:center; gap:5px; margin-bottom: 10px;">
                             <input type="checkbox" id="removeBgCheck"> 
-                            <span>4. 去除黑色背景 (开启实时预览)</span>
+                            <span>4. 开启去背 (实时预览)</span>
                         </label>
-                        <div id="thresholdContainer" style="opacity:0.5; pointer-events:none;">
-                            <label style="font-size:13px; margin-bottom:5px;">容差阈值 (0-150): <span id="thresholdValue" style="color:#0056b3; font-weight:bold;">30</span></label>
-                            <input type="range" id="thresholdRange" min="0" max="150" value="30" style="width:100%">
-                            <p style="font-size:12px; color:#666; margin-top:5px;">拖动滑块，右侧小图会实时变化。</p>
+                        
+                        <div id="bgSettings" style="opacity:0.5; pointer-events:none;">
+                            <div class="color-picker-wrapper">
+                                <label style="margin-bottom:0; font-size:13px;">选择颜色:</label>
+                                <input type="color" id="bgColorPicker" value="#000000" style="width:40px; height:30px; padding:0; border:none; background:none; cursor:pointer;">
+                                <button id="eyedropperBtn" class="eyedropper-btn" title="点击后在大图预览区域点击选取颜色">🧪 吸管工具</button>
+                                <div id="selectedColorHex" style="font-family:monospace; font-size:12px; color:#666;">#000000</div>
+                            </div>
+
+                            <label style="font-size:13px; margin-bottom:5px;">容差阈值 (0-200): <span id="thresholdValue" style="color:#0056b3; font-weight:bold;">30</span></label>
+                            <input type="range" id="thresholdRange" min="0" max="200" value="30" style="width:100%">
+                            <p style="font-size:12px; color:#666; margin-top:5px;">调节容差以匹配相近颜色。可用吸管点击大图取色。</p>
                         </div>
                     </div>
                     <!-- 实时预览小窗口 -->
@@ -174,15 +211,20 @@
             rmBg: document.getElementById('removeBgCheck'),
             threshRange: document.getElementById('thresholdRange'),
             threshVal: document.getElementById('thresholdValue'),
-            threshCont: document.getElementById('thresholdContainer'),
-            livePreviewImg: document.getElementById('livePreviewImg')
+            bgSettings: document.getElementById('bgSettings'),
+            livePreviewImg: document.getElementById('livePreviewImg'),
+            bgColorPicker: document.getElementById('bgColorPicker'),
+            eyedropperBtn: document.getElementById('eyedropperBtn'),
+            selectedColorHex: document.getElementById('selectedColorHex')
         };
 
         let state = {
             img: null,
             zip: null,
             naturalWidth: 0,
-            naturalHeight: 0
+            naturalHeight: 0,
+            bgTargetColor: [0, 0, 0], // R, G, B
+            isPickingColor: false
         };
 
         // --- 1. 图片加载 ---
@@ -226,10 +268,67 @@
         // 去背开关
         els.rmBg.addEventListener('change', function() {
             const active = this.checked;
-            els.threshCont.style.opacity = active ? '1' : '0.5';
-            els.threshCont.style.pointerEvents = active ? 'auto' : 'none';
+            els.bgSettings.style.opacity = active ? '1' : '0.5';
+            els.bgSettings.style.pointerEvents = active ? 'auto' : 'none';
+            if (!active && state.isPickingColor) toggleColorPicking(false);
             updateLivePreview();
         });
+
+        // 颜色选择器
+        els.bgColorPicker.addEventListener('input', function() {
+            const hex = this.value;
+            els.selectedColorHex.textContent = hex.toUpperCase();
+            state.bgTargetColor = hexToRgb(hex);
+            updateLivePreview();
+        });
+
+        // 吸管工具
+        els.eyedropperBtn.addEventListener('click', () => {
+            toggleColorPicking(!state.isPickingColor);
+        });
+
+        function toggleColorPicking(active) {
+            state.isPickingColor = active;
+            els.eyedropperBtn.classList.toggle('active', active);
+            els.preview.style.cursor = active ? 'crosshair' : 'default';
+        }
+
+        // 大图点击取色
+        els.preview.addEventListener('click', e => {
+            if (!state.isPickingColor || !state.img) return;
+
+            const rect = els.preview.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (state.naturalWidth / rect.width);
+            const y = (e.clientY - rect.top) * (state.naturalHeight / rect.height);
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 1;
+            canvas.height = 1;
+            ctx.drawImage(state.img, x, y, 1, 1, 0, 0, 1, 1);
+            const pixel = ctx.getImageData(0, 0, 1, 1).data;
+            
+            const hex = rgbToHex(pixel[0], pixel[1], pixel[2]);
+            els.bgColorPicker.value = hex;
+            els.selectedColorHex.textContent = hex.toUpperCase();
+            state.bgTargetColor = [pixel[0], pixel[1], pixel[2]];
+            
+            toggleColorPicking(false);
+            updateLivePreview();
+        });
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? [
+                parseInt(result[1], 16),
+                parseInt(result[2], 16),
+                parseInt(result[3], 16)
+            ] : [0, 0, 0];
+        }
+
+        function rgbToHex(r, g, b) {
+            return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+        }
 
         // 容差滑块 -> 实时更新
         els.threshRange.addEventListener('input', function() {
@@ -306,9 +405,17 @@
             if (removeBg) {
                 const frame = ctx.getImageData(0, 0, cellW, cellH);
                 const data = frame.data;
+                const [tr, tg, tb] = state.bgTargetColor;
                 for (let i = 0; i < data.length; i += 4) {
-                    if (data[i] < threshold && data[i+1] < threshold && data[i+2] < threshold) {
-                        if (data[i+3] > 0) data[i+3] = 0;
+                    const r = data[i], g = data[i+1], b = data[i+2];
+                    // 计算欧几里得距离的近似值
+                    const diff = Math.sqrt(
+                        Math.pow(r - tr, 2) + 
+                        Math.pow(g - tg, 2) + 
+                        Math.pow(b - tb, 2)
+                    );
+                    if (diff < threshold) {
+                        data[i+3] = 0;
                     }
                 }
                 ctx.putImageData(frame, 0, 0);
@@ -378,9 +485,16 @@
                         if (removeBg) {
                             const frame = ctx.getImageData(0, 0, cellW, cellH);
                             const data = frame.data;
+                            const [tr, tg, tb] = state.bgTargetColor;
                             for (let i = 0; i < data.length; i += 4) {
-                                if (data[i] < threshold && data[i+1] < threshold && data[i+2] < threshold) {
-                                    if (data[i+3] > 0) data[i+3] = 0;
+                                const r = data[i], g = data[i+1], b = data[i+2];
+                                const diff = Math.sqrt(
+                                    Math.pow(r - tr, 2) + 
+                                    Math.pow(g - tg, 2) + 
+                                    Math.pow(b - tb, 2)
+                                );
+                                if (diff < threshold) {
+                                    data[i+3] = 0;
                                 }
                             }
                             ctx.putImageData(frame, 0, 0);
